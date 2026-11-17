@@ -45,6 +45,7 @@ public class QuizOverlay {
 
     /** Screen turned off after you already answered: swap in a fresh question for next time. */
     public void onScreenOff() {
+        if (exiting) { dismiss(); return; }
         if (root == null || !revealed) return;
         index--;           // same position in the "1 / N" count
         nextCard();
@@ -55,19 +56,22 @@ public class QuizOverlay {
         wm = c.getSystemService(WindowManager.class);
     }
 
-    public boolean isShowing() { return root != null; }
+    /** False while the exit animation is playing: the quiz is already done at that point. */
+    public boolean isShowing() { return root != null && !exiting; }
 
     public void show() {
+        if (exiting) dismiss(); // a new quiz is wanted while the last one is still animating out
         if (root != null) return;
         th = QuizTheme.load(ctx);
         total = Prefs.questionsPerUnlock(ctx);
         index = 0;
         root = build();
-        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+        // TRANSLUCENT (not OPAQUE) so the app underneath shows through while the exit animation plays.
+        lp = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
-                PixelFormat.OPAQUE);
+                PixelFormat.TRANSLUCENT);
         // ADJUST_NOTHING: the window is never resized/pushed up by the keyboard (it draws over the bottom bar).
         lp.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING | WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE;
         lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
@@ -103,6 +107,7 @@ public class QuizOverlay {
     }
 
     public void dismiss() {
+        exiting = false;
         if (root == null) return;
         InputMethodManager imm = ctx.getSystemService(InputMethodManager.class);
         if (imm != null) imm.hideSoftInputFromWindow(root.getWindowToken(), 0);
@@ -113,7 +118,111 @@ public class QuizOverlay {
 
     private void finish() {
         Prefs.get(ctx).edit().putLong(Prefs.LAST_QUIZ_DONE, System.currentTimeMillis()).apply();
-        dismiss();
+        animateOut();
+    }
+
+    // ---------------------------------------------------------------- exit animation
+
+    private boolean exiting;
+    private WindowManager.LayoutParams lp;
+
+    /** Plays the chosen exit animation, then removes the overlay. Touches pass through meanwhile. */
+    private void animateOut() {
+        if (root == null || exiting) return;
+        int style = Prefs.exitAnim(ctx);
+        if (style == 0) { dismiss(); return; }
+        exiting = true;
+        hideKeyboard();
+        try {
+            lp.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+            wm.updateViewLayout(root, lp);
+        } catch (Exception ignored) {}
+
+        final View r = root;
+        final long dur = Prefs.exitAnimMs(ctx);
+        final float w = Math.max(1, r.getWidth()), h = Math.max(1, r.getHeight());
+        android.view.animation.Interpolator accel = new android.view.animation.AccelerateInterpolator(1.6f);
+        android.view.animation.Interpolator smooth = new android.view.animation.AccelerateDecelerateInterpolator();
+        r.setPivotX(w / 2f);
+        r.setPivotY(h / 2f);
+
+        switch (style) {
+            case 1: // Fade
+                r.animate().alpha(0f).setInterpolator(smooth).setDuration(dur).start();
+                break;
+            case 2: // Slide up
+                r.animate().translationY(-h).setInterpolator(accel).setDuration(dur).start();
+                break;
+            case 3: // Slide down
+                r.animate().translationY(h).setInterpolator(accel).setDuration(dur).start();
+                break;
+            case 4: // Slide sideways
+                r.animate().translationX(-w).setInterpolator(accel).setDuration(dur).start();
+                break;
+            case 5: // Zoom through: the quiz flies past the camera
+                r.animate().scaleX(1.4f).scaleY(1.4f).alpha(0f).setInterpolator(accel).setDuration(dur).start();
+                break;
+            case 6: // Shrink away
+                r.animate().scaleX(0.7f).scaleY(0.7f).alpha(0f).setInterpolator(accel).setDuration(dur).start();
+                break;
+            case 7: { // Circle close: shrinks into the 解放 button
+                int[] rl = new int[2], nl = new int[2];
+                r.getLocationOnScreen(rl);
+                next.getLocationOnScreen(nl);
+                int cx = nl[0] - rl[0] + next.getWidth() / 2, cy = nl[1] - rl[1] + next.getHeight() / 2;
+                float radius = (float) Math.hypot(Math.max(cx, w - cx), Math.max(cy, h - cy));
+                try {
+                    android.animation.Animator a = android.view.ViewAnimationUtils.createCircularReveal(r, cx, cy, radius, 0f);
+                    a.setInterpolator(accel);
+                    a.setDuration(dur);
+                    a.start();
+                } catch (Exception e) {
+                    r.animate().alpha(0f).setDuration(dur).start();
+                }
+                break;
+            }
+            case 8: // Curtain: rolls up into the top edge
+                r.setPivotY(0f);
+                r.animate().scaleY(0f).setInterpolator(accel).setDuration(dur).start();
+                break;
+            case 9: // Spin away
+                r.animate().rotation(-120f).scaleX(0.15f).scaleY(0.15f).alpha(0f)
+                        .setInterpolator(accel).setDuration(dur).start();
+                break;
+            case 10: // Card flip: turns edge-on like a page
+                r.setCameraDistance(w * 8f);
+                r.setPivotX(0f);
+                r.animate().rotationY(-90f).setInterpolator(accel).setDuration(dur).start();
+                break;
+            case 11: // Drop: the word card falls off the screen, then everything fades
+                box.animate().translationY(h).rotation(14f).setInterpolator(accel).setDuration(dur).start();
+                r.animate().alpha(0f).setStartDelay(dur / 3).setInterpolator(smooth).setDuration(dur - dur / 3).start();
+                break;
+            case 12: // Blur dissolve (Android 12+), otherwise a plain fade
+                if (android.os.Build.VERSION.SDK_INT >= 31) {
+                    android.animation.ValueAnimator va = android.animation.ValueAnimator.ofFloat(0f, 1f);
+                    va.setDuration(dur);
+                    va.setInterpolator(smooth);
+                    va.addUpdateListener(an -> {
+                        float t = (float) an.getAnimatedValue();
+                        float rad = 1f + 60f * t;
+                        r.setRenderEffect(android.graphics.RenderEffect.createBlurEffect(rad, rad, android.graphics.Shader.TileMode.DECAL));
+                        r.setAlpha(1f - t);
+                        r.setScaleX(1f + 0.08f * t);
+                        r.setScaleY(1f + 0.08f * t);
+                    });
+                    va.start();
+                } else {
+                    r.animate().alpha(0f).setInterpolator(smooth).setDuration(dur).start();
+                }
+                break;
+            default:
+                r.animate().alpha(0f).setDuration(dur).start();
+        }
+        // Remove the window once the animation is over (unless it was already dismissed or replaced).
+        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+            if (root == r && exiting) dismiss();
+        }, dur + 40);
     }
 
     private void nextCard() {
@@ -123,7 +232,9 @@ public class QuizOverlay {
         revealed = false;
         meaning = "";
         progress.setText(total > 1 ? "ことばロック  ·  " + index + " / " + total : "ことばロック");
-        instructions.setText(card.instructions.isEmpty() ? "読み方を入力して" : card.instructions);
+        boolean defaultPrompt = card.instructions.isEmpty()
+                || card.instructions.replaceAll("[!！.。\\s]+$", "").equalsIgnoreCase("Type the reading");
+        instructions.setText(defaultPrompt ? "読み方を入力しなさい" : card.instructions);
         question.setText(card.question);
         input.setText("");
         input.setHint("ひらがなで入力");
@@ -344,12 +455,14 @@ public class QuizOverlay {
         box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(18), dp(26), dp(18), dp(32));
+        // Frosted glass: translucent card tint (lighter at the top) so the ambient background shows
+        // through, with a faint bright edge. No elevation shadow — it would darken through the glass.
         GradientDrawable boxBg = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{mix(th.card, th.text, 0.04f), th.card});
+                new int[]{(mix(th.card, th.text, 0.10f) & 0x00FFFFFF) | 0xB3000000,
+                          (th.card & 0x00FFFFFF) | 0x99000000});
         boxBg.setCornerRadius(dp(26));
-        boxBg.setStroke(dp(1), (th.text & 0x00FFFFFF) | 0x14000000);
+        boxBg.setStroke(dp(1), (th.text & 0x00FFFFFF) | 0x33000000);
         box.setBackground(boxBg);
-        shadow(box, 16);
         col.addView(box, full(16));
 
         instructions = text(14, th.sub, false);

@@ -28,6 +28,20 @@ public final class Prefs {
     public static final String KEEP_KEYBOARD_WRONG = "keep_keyboard_wrong";
     public static final String HIDE_NAV_BAR = "hide_nav_bar";
     public static final String FLOAT_DECK_WORDS = "float_deck_words";
+    public static final String EXIT_ANIM = "exit_anim";
+    public static final String EXIT_ANIM_MS = "exit_anim_ms";
+
+    /** How the quiz leaves the screen after 解放. Index into this list is what gets stored. */
+    public static final String[] EXIT_ANIMS = {
+            "None (instant)", "Fade", "Slide up", "Slide down", "Slide sideways", "Zoom through",
+            "Shrink away", "Circle close", "Curtain", "Spin away", "Card flip", "Drop", "Blur dissolve",
+    };
+    public static int exitAnim(Context c) {
+        int v = get(c).getInt(EXIT_ANIM, 1);
+        return v < 0 || v >= EXIT_ANIMS.length ? 1 : v;
+    }
+    /** Exit animation length in milliseconds. */
+    public static int exitAnimMs(Context c) { return Math.max(50, Math.min(5000, get(c).getInt(EXIT_ANIM_MS, 450))); }
 
     /** Background animation: true (default) = words from your deck, false = single hiragana. */
     public static boolean floatDeckWords(Context c) { return get(c).getBoolean(FLOAT_DECK_WORDS, true); }

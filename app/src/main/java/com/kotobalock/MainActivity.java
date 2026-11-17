@@ -41,7 +41,7 @@ public class MainActivity extends Activity {
 
     private Status overlayStatus, batteryStatus, lockStatus, deckStatus;
     private Button overlayBtn, batteryBtn, lockBtn;
-    private EditText deckUrl, perUnlock, cooldown, syncHours, questionSize;
+    private EditText deckUrl, perUnlock, cooldown, syncHours, questionSize, exitAnimMs;
     private TextView heroStatus;
 
     // ================================================================ lifecycle
@@ -184,6 +184,11 @@ public class MainActivity extends Activity {
             recreate();
         }), lp(10));
 
+        choiceRow(look, "Unlock animation", "How the quiz leaves the screen when you tap 解放.",
+                Prefs.EXIT_ANIMS, Prefs.exitAnim(this),
+                idx -> Prefs.get(this).edit().putInt(Prefs.EXIT_ANIM, idx).apply());
+        exitAnimMs = numberRow(look, "Animation length (ms)", "50 – 5000. 1000 ms = 1 second.", Prefs.exitAnimMs(this));
+
         divider(look);
         look.addView(rowTitle("Colours"), lp(12));
         for (int i = 0; i < QuizTheme.SLOTS.length; i++) look.addView(colorRow(i));
@@ -191,6 +196,8 @@ public class MainActivity extends Activity {
         look.addView(secondary("Reset appearance", v -> {
             QuizTheme.applyPreset(this, 0);
             questionSize.setText("52");
+            exitAnimMs.setText("450");
+            Prefs.get(this).edit().remove(Prefs.EXIT_ANIM).apply();
             saveFields();
             recreate();
         }), lp(14));
@@ -256,6 +263,7 @@ public class MainActivity extends Activity {
         e.putInt(Prefs.COOLDOWN_MIN, Math.max(0, parse(cooldown, 0)));
         e.putInt(Prefs.AUTO_SYNC_HOURS, Math.max(0, parse(syncHours, 6)));
         e.putInt(Prefs.QUESTION_SIZE, Math.max(20, Math.min(96, parse(questionSize, 52))));
+        e.putInt(Prefs.EXIT_ANIM_MS, Math.max(50, Math.min(5000, parse(exitAnimMs, 450))));
         e.apply();
     }
 
@@ -414,6 +422,42 @@ public class MainActivity extends Activity {
         card.addView(row);
     }
 
+    /** A row showing the current choice; tapping it opens a single-choice list. */
+    private void choiceRow(LinearLayout card, String title, String desc, String[] options, int selected, OnPick cb) {
+        if (card.getChildCount() > 0) divider(card);
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(12), 0, dp(4));
+        LinearLayout texts = new LinearLayout(this);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        texts.addView(rowTitle(title));
+        if (desc != null) {
+            TextView d = text(desc, 13, th.sub, false);
+            d.setGravity(Gravity.START);
+            texts.addView(d, lp(3));
+        }
+        row.addView(texts, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+        TextView value = text(options[selected] + "  ›", 15, th.check, true);
+        LinearLayout.LayoutParams vl = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        vl.leftMargin = dp(12);
+        row.addView(value, vl);
+        final int[] cur = {selected};
+        row.setOnClickListener(v -> {
+            int dialogTheme = dark ? android.R.style.Theme_DeviceDefault_Dialog_Alert : android.R.style.Theme_DeviceDefault_Light_Dialog_Alert;
+            new AlertDialog.Builder(this, dialogTheme)
+                    .setTitle(title)
+                    .setSingleChoiceItems(options, cur[0], (d, which) -> {
+                        cur[0] = which;
+                        value.setText(options[which] + "  ›");
+                        cb.on(which);
+                        d.dismiss();
+                    })
+                    .setNegativeButton("Cancel", null)
+                    .show();
+        });
+        card.addView(row);
+    }
+
     private EditText numberRow(LinearLayout card, String title, String desc, int value) {
         if (card.getChildCount() > 0) divider(card);
         LinearLayout row = new LinearLayout(this);
@@ -514,6 +558,7 @@ public class MainActivity extends Activity {
         for (int i = 0; i < options.length; i++) {
             final int idx = i;
             TextView t = text(options[i], 14.5f, i == selected ? th.btnText : th.sub, true);
+            t.setGravity(Gravity.CENTER);
             t.setPadding(0, dp(10), 0, dp(10));
             if (i == selected) {
                 GradientDrawable on = new GradientDrawable();
