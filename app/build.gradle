@@ -1,0 +1,17 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'com.kotobalock'
+    compileSdk 36
+    defaultConfig {
+        applicationId 'com.kotobalock'
+        minSdk 29
+        targetSdk 36
+        versionCode 10
+        versionName '1.9'
+    }
+    buildTypes {
+        // Debug-signed release so the APK installs directly without a keystore setup.
+        release { minifyEnabled false; signingConfig signingConfigs.debug }
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
