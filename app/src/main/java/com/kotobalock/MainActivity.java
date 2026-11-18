@@ -41,7 +41,8 @@ public class MainActivity extends Activity {
 
     private Status overlayStatus, batteryStatus, lockStatus, deckStatus;
     private Button overlayBtn, batteryBtn, lockBtn;
-    private EditText deckUrl, perUnlock, cooldown, syncHours, questionSize, exitAnimMs;
+    private EditText deckUrl, perUnlock, cooldown, syncHours, questionSize, exitAnimMs, newPerDay;
+    private Status statsStatus;
     private TextView heroStatus;
 
     // ================================================================ lifecycle
@@ -140,6 +141,29 @@ public class MainActivity extends Activity {
         toggleRow(meanings, "Look up missing meanings on jisho.org",
                 "Uses the card's comment from your deck; otherwise looks it up once and saves it.",
                 Prefs.MEANING_LOOKUP, true, null);
+
+        // ---- Progress
+        LinearLayout progress = section(col, "Progress");
+        statsStatus = status(progress);
+        toggleRow(progress, "Show how many questions I've answered",
+                "A running total in the middle of the quiz's bottom bar.", Prefs.SHOW_ANSWERED, true, null);
+        toggleRow(progress, "Prioritise words I struggle with",
+                "Every first attempt is tracked per word. Words you miss come up more often until you get them right.",
+                Prefs.PRIORITISE_WEAK, true, null);
+        toggleRow(progress, "Limit new words per day",
+                "Once the limit is reached you only get words you've already seen, until tomorrow.",
+                Prefs.NEW_LIMIT_ON, true, on -> newPerDay.setEnabled(on));
+        newPerDay = numberRow(progress, "New words per day", null, Prefs.newPerDay(this));
+        newPerDay.setEnabled(Prefs.newLimitOn(this));
+        progress.addView(secondary("Reset statistics", v -> {
+            int dialogTheme = dark ? android.R.style.Theme_DeviceDefault_Dialog_Alert : android.R.style.Theme_DeviceDefault_Light_Dialog_Alert;
+            new AlertDialog.Builder(this, dialogTheme)
+                    .setTitle("Reset statistics?")
+                    .setMessage("Your answered count and every word's history will be erased. This can't be undone.")
+                    .setPositiveButton("Reset", (d, w) -> { Stats.reset(this); refreshStats(); toast("Statistics reset"); })
+                    .setNegativeButton("Cancel", null)
+                    .show();
+        }), lp(14));
 
         // ---- Lock screen mode
         LinearLayout lock = section(col, "Lock screen mode");
@@ -244,7 +268,20 @@ public class MainActivity extends Activity {
         refreshDeckStatus();
         refreshLockStatus();
         refreshHero();
+        refreshStats();
         QuizService.start(this);
+    }
+
+    private void refreshStats() {
+        long total = Stats.total(this);
+        int[] s = Stats.summary(this); // seen, right, wrong, struggling
+        if (total == 0) { statsStatus.set(0, "No answers yet — your progress will show up here."); return; }
+        int pct = Math.round(100f * s[1] / Math.max(1, s[1] + s[2]));
+        String limit = Prefs.newLimitOn(this)
+                ? "\nNew words today: " + Stats.newToday(this) + " / " + Prefs.newPerDay(this)
+                : "\nNew words today: " + Stats.newToday(this);
+        statsStatus.set(1, String.format(java.util.Locale.US, "%,d answered · %d%% right on the first try", total, pct)
+                + "\n" + s[0] + " words seen · " + s[3] + " you're struggling with" + limit);
     }
 
     @Override protected void onPause() {
@@ -264,6 +301,7 @@ public class MainActivity extends Activity {
         e.putInt(Prefs.AUTO_SYNC_HOURS, Math.max(0, parse(syncHours, 6)));
         e.putInt(Prefs.QUESTION_SIZE, Math.max(20, Math.min(96, parse(questionSize, 52))));
         e.putInt(Prefs.EXIT_ANIM_MS, Math.max(50, Math.min(5000, parse(exitAnimMs, 450))));
+        e.putInt(Prefs.NEW_PER_DAY, Math.max(1, Math.min(999, parse(newPerDay, 20))));
         e.apply();
     }
 

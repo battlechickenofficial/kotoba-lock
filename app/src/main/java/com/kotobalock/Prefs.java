@@ -28,6 +28,19 @@ public final class Prefs {
     public static final String KEEP_KEYBOARD_WRONG = "keep_keyboard_wrong";
     public static final String HIDE_NAV_BAR = "hide_nav_bar";
     public static final String FLOAT_DECK_WORDS = "float_deck_words";
+    public static final String SHOW_ANSWERED = "show_answered";
+    public static final String PRIORITISE_WEAK = "prioritise_weak";
+    public static final String NEW_LIMIT_ON = "new_limit_on";
+    public static final String NEW_PER_DAY = "new_per_day";
+
+    /** Default true: lifetime answered count in the middle of the quiz's bottom bar. */
+    public static boolean showAnswered(Context c) { return get(c).getBoolean(SHOW_ANSWERED, true); }
+    /** Default true: words you get wrong come up more often. */
+    public static boolean prioritiseWeak(Context c) { return get(c).getBoolean(PRIORITISE_WEAK, true); }
+    /** Default true, 20/day: cap on words you've never answered before. */
+    public static boolean newLimitOn(Context c) { return get(c).getBoolean(NEW_LIMIT_ON, true); }
+    public static int newPerDay(Context c) { return Math.max(1, Math.min(999, get(c).getInt(NEW_PER_DAY, 20))); }
+
     public static final String EXIT_ANIM = "exit_anim";
     public static final String EXIT_ANIM_MS = "exit_anim_ms";
 

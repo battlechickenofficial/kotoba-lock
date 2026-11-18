@@ -289,7 +289,11 @@ public class QuizOverlay {
         boolean ok = isCorrect();
         boolean mustBeCorrect = Prefs.requireCorrect(ctx);
         // Once you got it wrong, the meaning stays visible while you retype it (strict mode).
-        if (!revealed) lastCorrect = ok;
+        if (!revealed) {
+            lastCorrect = ok;
+            Stats.record(ctx, card, ok);
+            updateAnsweredCount(true);
+        }
         revealed = true;
 
         result.setVisibility(View.VISIBLE);
@@ -552,19 +556,41 @@ public class QuizOverlay {
         bar.setClipChildren(false);
         bar.setClipToPadding(false);
 
+        // Equal-width side slots keep the counter in the true centre even if a button is missing.
+        android.widget.FrameLayout leftSlot = new android.widget.FrameLayout(ctx), rightSlot = new android.widget.FrameLayout(ctx);
+        leftSlot.setClipChildren(false);
+        rightSlot.setClipChildren(false);
         if (Prefs.lockMode(ctx)) {
             View sos = roundButton(R.drawable.ic_call, "緊急通報", th.bad);
             sos.setOnClickListener(v -> emergency());
-            bar.addView(sos);
+            leftSlot.addView(sos, new android.widget.FrameLayout.LayoutParams(
+                    android.widget.FrameLayout.LayoutParams.WRAP_CONTENT, android.widget.FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.START));
         }
-        bar.addView(new View(ctx), new LinearLayout.LayoutParams(0, 1, 1)); // spacer
+        bar.addView(leftSlot, new LinearLayout.LayoutParams(dp(80), LinearLayout.LayoutParams.WRAP_CONTENT));
+        // Middle: lifetime answered count (or an empty spacer when turned off).
+        answeredView = null;
+        LinearLayout counter = new LinearLayout(ctx);
+        counter.setOrientation(LinearLayout.VERTICAL);
+        counter.setGravity(Gravity.CENTER);
+        if (Prefs.showAnswered(ctx)) {
+            answeredView = text(22, th.text, true);
+            counter.addView(answeredView);
+            TextView lbl = text(11, th.sub, false);
+            lbl.setText("回答した問題");
+            lbl.setLetterSpacing(0.1f);
+            counter.addView(lbl);
+            updateAnsweredCount(false);
+        }
+        bar.addView(counter, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
         if (torchId() != null) {
             View torch = roundButton(R.drawable.ic_flashlight, "ライト", th.text);
             torch.setOnClickListener(v -> toggleTorch());
-            bar.addView(torch);
+            rightSlot.addView(torch, new android.widget.FrameLayout.LayoutParams(
+                    android.widget.FrameLayout.LayoutParams.WRAP_CONTENT, android.widget.FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.END));
             torchButton = torch;
             paintTorch();
         }
+        bar.addView(rightSlot, new LinearLayout.LayoutParams(dp(80), LinearLayout.LayoutParams.WRAP_CONTENT));
         rootCol.addView(bar, new android.widget.FrameLayout.LayoutParams(
                 android.widget.FrameLayout.LayoutParams.MATCH_PARENT, android.widget.FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM));
 
@@ -592,6 +618,18 @@ public class QuizOverlay {
     }
 
     // ---------------------------------------------------------------- bottom bar
+
+    private TextView answeredView;
+
+    private void updateAnsweredCount(boolean bump) {
+        if (answeredView == null) return;
+        answeredView.setText(String.format(Locale.US, "%,d", Stats.total(ctx)));
+        if (bump) {
+            answeredView.setScaleX(1.25f); answeredView.setScaleY(1.25f);
+            answeredView.animate().scaleX(1f).scaleY(1f).setDuration(300)
+                    .setInterpolator(new android.view.animation.OvershootInterpolator(3f)).start();
+        }
+    }
 
     private View torchButton;
     private boolean torchOn;

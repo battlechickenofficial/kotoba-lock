@@ -55,10 +55,55 @@ public final class Deck {
 
     public static synchronized String name(Context c) { cards(c); return cacheName; }
 
-    /** Random card, avoiding an immediate repeat when possible. */
+    /**
+     * Picks the next card, avoiding an immediate repeat when possible.
+     * - Daily new-word limit: once today's quota of never-answered words is used up, only words
+     *   you've already met are shown (unless there are none yet).
+     * - Prioritise struggles: words you miss are weighted up to ~13x more likely than ones you know.
+     */
     public static synchronized Card random(Context c) {
         List<Card> l = cards(c);
         if (l.isEmpty()) return null;
+        boolean limit = Prefs.newLimitOn(c);
+        boolean prioritise = Prefs.prioritiseWeak(c);
+        if (!limit && !prioritise) return uniform(l);
+
+        List<Card> fresh = new ArrayList<>(), seen = new ArrayList<>();
+        List<Stats.Word> seenStats = new ArrayList<>();
+        for (int i = 0; i < l.size(); i++) {
+            if (i == lastIndex && l.size() > 1) continue;
+            Stats.Word w = Stats.get(c, l.get(i).question);
+            if (w == null) fresh.add(l.get(i)); else { seen.add(l.get(i)); seenStats.add(w); }
+        }
+        boolean newAllowed = !fresh.isEmpty()
+                && (!limit || Stats.newToday(c) < Prefs.newPerDay(c) || seen.isEmpty());
+        Card pick;
+        if (newAllowed && (seen.isEmpty() || RNG.nextFloat() < 0.4f)) {
+            pick = fresh.get(RNG.nextInt(fresh.size()));
+        } else if (!seen.isEmpty()) {
+            if (!prioritise) {
+                pick = seen.get(RNG.nextInt(seen.size()));
+            } else {
+                double[] wt = new double[seen.size()];
+                double sum = 0;
+                for (int i = 0; i < wt.length; i++) {
+                    float k = seenStats.get(i).weakness;
+                    wt[i] = 0.25 + 3.0 * k * k;  // ~0.25 for mastered, ~3.25 for always-missed
+                    sum += wt[i];
+                }
+                double r = RNG.nextDouble() * sum;
+                int i = 0;
+                while (i < wt.length - 1 && (r -= wt[i]) > 0) i++;
+                pick = seen.get(i);
+            }
+        } else {
+            return uniform(l);
+        }
+        lastIndex = l.indexOf(pick);
+        return pick;
+    }
+
+    private static Card uniform(List<Card> l) {
         int i = RNG.nextInt(l.size());
         if (l.size() > 1 && i == lastIndex) i = (i + 1 + RNG.nextInt(l.size() - 1)) % l.size();
         lastIndex = i;
