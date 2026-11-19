@@ -1,4 +1,13 @@
 plugins { id 'com.android.application' }
+
+// Optional fixed signing key, so every build installs over the copy already on your phone.
+// Set in local.properties (not committed):  signing.storeFile=D:/path/to/kotoba-lock.keystore
+// It is a standard debug-style keystore (alias androiddebugkey, password android).
+def localProps = new Properties()
+def localFile = rootProject.file('local.properties')
+if (localFile.exists()) localFile.withInputStream { localProps.load(it) }
+def pinnedKey = localProps.getProperty('signing.storeFile')
+
 android {
     namespace 'com.kotobalock'
     compileSdk 36
@@ -9,9 +18,21 @@ android {
         versionCode 13
         versionName '1.12'
     }
+    signingConfigs {
+        if (pinnedKey) {
+            pinned {
+                storeFile file(pinnedKey)
+                storePassword 'android'
+                keyAlias 'androiddebugkey'
+                keyPassword 'android'
+            }
+        }
+    }
     buildTypes {
         // Debug-signed release so the APK installs directly without a keystore setup.
-        release { minifyEnabled false; signingConfig signingConfigs.debug }
+        // With signing.storeFile set, both debug and release use that key instead.
+        release { minifyEnabled false; signingConfig pinnedKey ? signingConfigs.pinned : signingConfigs.debug }
+        debug { if (pinnedKey) signingConfig signingConfigs.pinned }
     }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
 }

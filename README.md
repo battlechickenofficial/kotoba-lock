@@ -46,7 +46,15 @@ Requires the Android SDK (compileSdk 36) and JDK 17–24 (Gradle 8.13 doesn't ru
 ./gradlew assembleRelease
 ```
 
-The APK is written to `app/build/outputs/apk/release/app-release.apk` (debug-signed so it installs directly). Updates only install over a build signed with the same debug key, so build future versions on the same machine.
+The APK is written to `app/build/outputs/apk/release/app-release.apk` (debug-signed so it installs directly).
+
+Android only installs an update over a build signed with the same key. To always sign with one fixed key, add its path to `local.properties` (not committed):
+
+```properties
+signing.storeFile=D:/path/to/kotoba-lock.keystore
+```
+
+It must be a debug-style keystore (alias `androiddebugkey`, password `android`). Without this line the build uses your machine's default debug key.
 
 ## Setup on the phone
 
