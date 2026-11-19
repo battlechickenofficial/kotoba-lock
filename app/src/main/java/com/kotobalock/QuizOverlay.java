@@ -25,10 +25,17 @@ import android.widget.Toast;
 
 import java.util.Locale;
 
-/** Full-screen window drawn over every app; it stays until the quiz is finished. */
+/**
+ * The quiz screen. Normally a full-screen window drawn over every app that stays until the quiz
+ * is finished; in study mode the same screen is hosted by {@link StudyActivity} instead, with an
+ * exit button and no limit on questions.
+ */
 public class QuizOverlay {
     private final Context ctx;
     private final WindowManager wm;
+    /** Non-null in study mode. */
+    private final android.app.Activity studyHost;
+    private final boolean study;
     private View root;
     private QuizTheme th;
 
@@ -54,6 +61,32 @@ public class QuizOverlay {
     public QuizOverlay(Context c) {
         ctx = c;
         wm = c.getSystemService(WindowManager.class);
+        studyHost = null;
+        study = false;
+    }
+
+    /** Study mode: the quiz is the content of {@code host}; leaving it finishes the activity. */
+    public QuizOverlay(android.app.Activity host) {
+        ctx = host;
+        wm = null;
+        studyHost = host;
+        study = true;
+    }
+
+    /** Study mode: builds the screen for the activity and shows the first question. */
+    public View startStudy() {
+        th = QuizTheme.load(ctx);
+        total = Integer.MAX_VALUE;
+        index = 0;
+        root = build();
+        nextCard();
+        return root;
+    }
+
+    /** Back button / gesture. Returns true if it was handled here (closed the sentences panel). */
+    public boolean onBack() {
+        if (sentencesOpen) { closeSentences(); return true; }
+        return false;
     }
 
     /** False while the exit animation is playing: the quiz is already done at that point. */
@@ -109,6 +142,13 @@ public class QuizOverlay {
     public void dismiss() {
         exiting = false;
         if (root == null) return;
+        closeSentences();
+        if (study) {
+            hideKeyboard();
+            root = null;
+            studyHost.finish();
+            return;
+        }
         InputMethodManager imm = ctx.getSystemService(InputMethodManager.class);
         if (imm != null) imm.hideSoftInputFromWindow(root.getWindowToken(), 0);
         try { wm.removeView(root); } catch (Exception ignored) {}
@@ -117,6 +157,7 @@ public class QuizOverlay {
     }
 
     private void finish() {
+        if (study) { dismiss(); return; }
         Prefs.get(ctx).edit().putLong(Prefs.LAST_QUIZ_DONE, System.currentTimeMillis()).apply();
         animateOut();
     }
@@ -226,12 +267,18 @@ public class QuizOverlay {
     }
 
     private void nextCard() {
+        closeSentences();
         card = Deck.random(ctx);
-        if (card == null) { finish(); return; }
+        if (card == null) {
+            if (study) Toast.makeText(ctx, "No cards: add a deck and sync first", Toast.LENGTH_LONG).show();
+            finish();
+            return;
+        }
         index++;
         revealed = false;
         meaning = "";
-        progress.setText(total > 1 ? "ことばロック  ·  " + index + " / " + total : "ことばロック");
+        if (study) progress.setText("学習モード  ·  " + index);
+        else progress.setText(total > 1 ? "ことばロック  ·  " + index + " / " + total : "ことばロック");
         boolean defaultPrompt = card.instructions.isEmpty()
                 || card.instructions.replaceAll("[!！.。\\s]+$", "").equalsIgnoreCase("Type the reading");
         instructions.setText(defaultPrompt ? "読み方を入力しなさい" : card.instructions);
@@ -295,6 +342,8 @@ public class QuizOverlay {
             updateAnsweredCount(true);
         }
         revealed = true;
+        // The quiz word's furigana in the example sentences can be shown now.
+        if (sentencesOpen && shownSentences != null) showSentenceRows(shownSentences, shownCount);
 
         result.setVisibility(View.VISIBLE);
         answer.setVisibility(View.VISIBLE);
@@ -318,7 +367,7 @@ public class QuizOverlay {
             input.setEnabled(false);
             submit.setVisibility(View.GONE);
             next.setVisibility(View.VISIBLE);
-            next.setText(index < total ? "次の単語 →" : "解放");
+            next.setText(study || index < total ? "次の単語 →" : "解放");
             hideKeyboard();
         } else {
             // Strict mode: the answer is shown, now type it correctly to continue.
@@ -450,7 +499,7 @@ public class QuizOverlay {
 
         progress = text(13, th.sub, true);
         progress.setLetterSpacing(0.3f);
-        if (Prefs.allowSkip(ctx)) {
+        if (!study && Prefs.allowSkip(ctx)) {
             // Escape hatch, in case something goes wrong: long-press the header.
             progress.setOnLongClickListener(v -> { Toast.makeText(ctx, "クイズをスキップしました", Toast.LENGTH_SHORT).show(); dismiss(); return true; });
         }
@@ -538,9 +587,38 @@ public class QuizOverlay {
         next.setOnClickListener(v -> onNext());
         col.addView(next, full(24));
 
+        // Example sentences from jisho.org: a toggle at the bottom of the quiz that opens a
+        // panel of sentences right below it, inside the page.
+        sentencesBtn = text(14, th.sub, true);
+        sentencesBtn.setPadding(dp(16), dp(10), dp(16), dp(10));
+        GradientDrawable pill = new GradientDrawable();
+        pill.setCornerRadius(dp(50));
+        pill.setColor((th.card & 0x00FFFFFF) | 0x99000000);
+        pill.setStroke(dp(1), (th.sub & 0x00FFFFFF) | 0x40000000);
+        sentencesBtn.setBackground(pill);
+        sentencesBtn.setOnClickListener(v -> toggleSentences());
+        pressEffect(sentencesBtn);
+        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        sp.topMargin = dp(36);
+        sp.gravity = Gravity.CENTER_HORIZONTAL;
+        col.addView(sentencesBtn, sp);
+
+        sentencesPanel = new LinearLayout(ctx);
+        sentencesPanel.setOrientation(LinearLayout.VERTICAL);
+        sentencesPanel.setPadding(dp(18), dp(16), dp(18), dp(16));
+        GradientDrawable glass = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{(mix(th.card, th.text, 0.10f) & 0x00FFFFFF) | 0xB3000000,
+                          (th.card & 0x00FFFFFF) | 0x99000000});
+        glass.setCornerRadius(dp(22));
+        glass.setStroke(dp(1), (th.text & 0x00FFFFFF) | 0x33000000);
+        sentencesPanel.setBackground(glass);
+        col.addView(sentencesPanel, full(12));
+        closeSentences();
+
         // Root: quiz fills the screen; the bar (緊急通報 left, flashlight right) is pinned to the
         // bottom and never moves — the keyboard simply opens on top of it.
         android.widget.FrameLayout rootCol = new android.widget.FrameLayout(ctx);
+        rootFrame = rootCol;
         rootCol.setBackgroundColor(th.bg);
         rootCol.addView(new AmbientBackground(ctx, th, Prefs.floatDeckWords(ctx) ? Deck.cards(ctx) : java.util.Collections.<Deck.Card>emptyList()), new android.widget.FrameLayout.LayoutParams(
                 android.widget.FrameLayout.LayoutParams.MATCH_PARENT, android.widget.FrameLayout.LayoutParams.MATCH_PARENT));
@@ -555,12 +633,20 @@ public class QuizOverlay {
         bar.setPadding(dp(28), dp(8), dp(28), dp(20));
         bar.setClipChildren(false);
         bar.setClipToPadding(false);
+        // Content scrolling under the bar fades out instead of colliding with the buttons.
+        bar.setBackground(new GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP,
+                new int[]{th.bg, th.bg, (th.bg & 0x00FFFFFF) | 0xCC000000, th.bg & 0x00FFFFFF}));
 
         // Equal-width side slots keep the counter in the true centre even if a button is missing.
         android.widget.FrameLayout leftSlot = new android.widget.FrameLayout(ctx), rightSlot = new android.widget.FrameLayout(ctx);
         leftSlot.setClipChildren(false);
         rightSlot.setClipChildren(false);
-        if (Prefs.lockMode(ctx)) {
+        if (study) {
+            View exit = roundButton(R.drawable.ic_close, "終了", th.text);
+            exit.setOnClickListener(v -> dismiss());
+            leftSlot.addView(exit, new android.widget.FrameLayout.LayoutParams(
+                    android.widget.FrameLayout.LayoutParams.WRAP_CONTENT, android.widget.FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.START));
+        } else if (Prefs.lockMode(ctx)) {
             View sos = roundButton(R.drawable.ic_call, "緊急通報", th.bad);
             sos.setOnClickListener(v -> emergency());
             leftSlot.addView(sos, new android.widget.FrameLayout.LayoutParams(
@@ -582,7 +668,7 @@ public class QuizOverlay {
             updateAnsweredCount(false);
         }
         bar.addView(counter, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
-        if (torchId() != null) {
+        if (!study && torchId() != null) {
             View torch = roundButton(R.drawable.ic_flashlight, "ライト", th.text);
             torch.setOnClickListener(v -> toggleTorch());
             rightSlot.addView(torch, new android.widget.FrameLayout.LayoutParams(
@@ -608,6 +694,7 @@ public class QuizOverlay {
                 right = insets.getStableInsetRight(); navBottom = insets.getStableInsetBottom();
             }
             v.setPadding(left, top, right, 0);
+            lastNavBottom = navBottom;
             bar.setPadding(dp(28), dp(8), dp(28), dp(20) + navBottom);
             int barSpace = dp(110) + navBottom;
             scroll.setPadding(0, 0, 0, Math.max(barSpace, ime));
@@ -620,6 +707,186 @@ public class QuizOverlay {
     // ---------------------------------------------------------------- bottom bar
 
     private TextView answeredView;
+
+    // ---------------------------------------------------------------- example sentences (jisho.org)
+
+    private TextView sentencesBtn;
+    private android.widget.FrameLayout rootFrame;
+    private LinearLayout sentencesPanel;
+    private boolean sentencesOpen;
+    private int lastNavBottom;
+    private static final int SENTENCES_SHOWN = 5;
+
+    private void toggleSentences() {
+        if (sentencesOpen) closeSentences(); else openSentences();
+    }
+
+    private void openSentences() {
+        if (card == null || sentencesPanel == null) return;
+        hideKeyboard();
+        sentencesOpen = true;
+        sentencesBtn.setText("例文を隠す  ▴");
+        sentencesPanel.removeAllViews();
+        sentencesPanel.addView(sentencesNote("読み込み中…"));
+        sentencesPanel.setVisibility(View.VISIBLE);
+        fadeIn(sentencesPanel);
+        scrollToSentences();
+        final Deck.Card forCard = card;
+        Sentences.get(card.question, list -> {
+            if (root == null || card != forCard || !sentencesOpen) return;
+            sentencesPanel.removeAllViews();
+            if (list == null) { sentencesPanel.addView(sentencesNote("例文を読み込めませんでした（オフライン？）")); return; }
+            if (list.isEmpty()) { sentencesPanel.addView(sentencesNote("jisho.org に例文がありません")); return; }
+            showSentenceRows(list, Math.min(SENTENCES_SHOWN, list.size()));
+            scrollToSentences();
+        });
+    }
+
+    /** Lists the first {@code count} sentences, plus a "show more" row if there are more. */
+    private void showSentenceRows(java.util.List<Sentences.Sentence> list, int count) {
+        shownSentences = list;
+        shownCount = count;
+        sentencesPanel.removeAllViews();
+        for (int i = 0; i < count; i++) {
+            Sentences.Sentence s = list.get(i);
+            if (i > 0) {
+                View d = new View(ctx);
+                d.setBackgroundColor((th.text & 0x00FFFFFF) | 0x14000000);
+                LinearLayout.LayoutParams dl = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, Math.max(1, dp(0.8f)));
+                dl.topMargin = dp(12);
+                dl.bottomMargin = dp(12);
+                sentencesPanel.addView(d, dl);
+            }
+            sentencesPanel.addView(sentenceView(s));
+            if (!s.english.isEmpty()) {
+                TextView en = text(13.5f, th.sub, false);
+                en.setGravity(Gravity.START);
+                en.setTextLocale(Locale.ENGLISH);
+                en.setText(s.english);
+                sentencesPanel.addView(en, full(4));
+            }
+        }
+        if (count < list.size()) {
+            TextView more = text(14, th.check, true);
+            more.setText("もっと見る（" + (list.size() - count) + "）");
+            more.setPadding(0, dp(14), 0, dp(2));
+            more.setOnClickListener(v -> showSentenceRows(list, list.size()));
+            sentencesPanel.addView(more);
+        }
+        TextView src = text(11, th.sub, false);
+        src.setText("例文: jisho.org");
+        src.setAlpha(0.7f);
+        sentencesPanel.addView(src, full(12));
+    }
+
+    /** A Japanese sentence with furigana drawn above the words that have it. */
+    private TextView sentenceView(Sentences.Sentence s) {
+        TextView ja = text(17, th.text, false);
+        ja.setGravity(Gravity.START);
+        float rubySize = ja.getTextSize() * 0.5f;
+        android.text.SpannableStringBuilder b = new android.text.SpannableStringBuilder();
+        boolean anyRuby = false;
+        String word = card.question;
+        for (String[] p : s.parts) {
+            int start = b.length();
+            b.append(p[0]);
+            boolean hasWord = !word.isEmpty() && p[0].contains(word);
+            if (p[1] != null) {
+                // The quiz word's own reading stays hidden until you've answered.
+                String reading = hasWord && !revealed ? null : p[1];
+                b.setSpan(new RubySpan(reading, rubySize, th.sub, hasWord ? th.check : 0),
+                        start, b.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                anyRuby = true;
+            } else if (hasWord) {
+                // Plain text only: extra spans inside a RubySpan would split it and draw the reading twice.
+                for (int i = p[0].indexOf(word); i >= 0; i = p[0].indexOf(word, i + word.length())) {
+                    b.setSpan(new android.text.style.ForegroundColorSpan(th.check), start + i, start + i + word.length(), 0);
+                    b.setSpan(new android.text.style.StyleSpan(Typeface.BOLD), start + i, start + i + word.length(), 0);
+                }
+            }
+        }
+        // Room for the readings: above the first line, and between lines.
+        int rubyRoom = anyRuby ? (int) (rubySize * 1.3f) : 0;
+        ja.setLineSpacing(rubyRoom, 1.15f);
+        ja.setPadding(0, rubyRoom, 0, 0);
+        ja.setText(b);
+        return ja;
+    }
+
+    /** Draws a word with its reading in small text centred above it (like HTML ruby). */
+    private static final class RubySpan extends android.text.style.ReplacementSpan {
+        /** Null: draw the word without its reading. */
+        private final String reading;
+        /** Non-zero: draw the word bold in this colour (it's the quiz word). */
+        private final int highlightColor;
+        private final android.graphics.Paint rubyPaint = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+
+        RubySpan(String reading, float size, int color, int highlightColor) {
+            this.reading = reading;
+            this.highlightColor = highlightColor;
+            rubyPaint.setTextSize(size);
+            rubyPaint.setColor(color);
+            rubyPaint.setTextLocale(Locale.JAPANESE);
+        }
+
+        private float rubyWidth() { return reading == null ? 0 : rubyPaint.measureText(reading); }
+
+        private float baseWidth(android.graphics.Paint paint, CharSequence text, int start, int end) {
+            if (highlightColor == 0) return paint.measureText(text, start, end);
+            boolean was = paint.isFakeBoldText();
+            paint.setFakeBoldText(true);
+            float w = paint.measureText(text, start, end);
+            paint.setFakeBoldText(was);
+            return w;
+        }
+
+        @Override public int getSize(android.graphics.Paint paint, CharSequence text, int start, int end, android.graphics.Paint.FontMetricsInt fm) {
+            if (fm != null) {
+                android.graphics.Paint.FontMetricsInt p = paint.getFontMetricsInt();
+                fm.ascent = p.ascent; fm.descent = p.descent; fm.top = p.top; fm.bottom = p.bottom;
+            }
+            return (int) Math.ceil(Math.max(baseWidth(paint, text, start, end), rubyWidth()));
+        }
+
+        @Override public void draw(android.graphics.Canvas c, CharSequence text, int start, int end, float x,
+                                   int top, int y, int bottom, android.graphics.Paint paint) {
+            float baseW = baseWidth(paint, text, start, end), rubyW = rubyWidth();
+            float w = Math.max(baseW, rubyW);
+            int color = paint.getColor();
+            boolean bold = paint.isFakeBoldText();
+            if (highlightColor != 0) { paint.setColor(highlightColor); paint.setFakeBoldText(true); }
+            c.drawText(text, start, end, x + (w - baseW) / 2f, y, paint);
+            paint.setColor(color);
+            paint.setFakeBoldText(bold);
+            if (reading == null) return;
+            float rubyBaseline = y + paint.ascent() - rubyPaint.descent() + rubyPaint.getTextSize() * 0.05f;
+            c.drawText(reading, x + (w - rubyW) / 2f, rubyBaseline, rubyPaint);
+        }
+    }
+
+    private TextView sentencesNote(String msg) {
+        TextView t = text(14, th.sub, false);
+        t.setText(msg);
+        return t;
+    }
+
+    private void scrollToSentences() {
+        scroll.postDelayed(() -> {
+            if (root != null && sentencesOpen) scroll.smoothScrollTo(0, Math.max(0, sentencesBtn.getTop() - dp(24)));
+        }, 120);
+    }
+
+    private java.util.List<Sentences.Sentence> shownSentences;
+    private int shownCount;
+
+    private void closeSentences() {
+        sentencesOpen = false;
+        shownSentences = null;
+        if (sentencesPanel == null) return;
+        sentencesPanel.removeAllViews();
+        sentencesPanel.setVisibility(View.GONE);
+        sentencesBtn.setText("例文を見る  ·  jisho.org  ▾");
+    }
 
     private void updateAnsweredCount(boolean bump) {
         if (answeredView == null) return;

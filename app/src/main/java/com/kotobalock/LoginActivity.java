@@ -44,8 +44,9 @@ public class LoginActivity extends Activity {
                 if ("kotobaweb.com".equals(u.getHost()) && url.contains("/dashboard")) trySync(false);
             }
         });
-        String[] p = Prefs.parseDeckUrl(Prefs.deckUrl(this));
-        web.loadUrl(p != null ? Prefs.deckUrl(this) : "https://kotobaweb.com/dashboard");
+        java.util.List<Deck.Info> decks = Deck.decks(this);
+        String first = decks.isEmpty() ? "" : decks.get(0).url;
+        web.loadUrl(Prefs.parseDeckUrl(first) != null ? first : "https://kotobaweb.com/dashboard");
         Toast.makeText(this, "Tap \"Login with Discord\", sign in, then wait — it closes by itself", Toast.LENGTH_LONG).show();
     }
 

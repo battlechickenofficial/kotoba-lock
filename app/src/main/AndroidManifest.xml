@@ -22,6 +22,10 @@
             </intent-filter>
         </activity>
 
+        <activity android:name=".StudyActivity" android:exported="false"
+            android:label="Study"
+            android:windowSoftInputMode="adjustNothing|stateVisible" />
+
         <activity android:name=".LoginActivity" android:exported="false"
             android:label="Log in to Kotoba" />
 

@@ -34,16 +34,24 @@ import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
-/** Settings page, styled with the same theme as the quiz screen. */
+/** Settings, split into tabs, styled with the same theme as the quiz screen. */
 public class MainActivity extends Activity {
     private QuizTheme th;
     private boolean dark;
 
     private Status overlayStatus, batteryStatus, lockStatus, deckStatus;
     private Button overlayBtn, batteryBtn, lockBtn;
-    private EditText deckUrl, perUnlock, cooldown, syncHours, questionSize, exitAnimMs, newPerDay;
-    private Status statsStatus;
+    private EditText perUnlock, cooldown, syncHours, questionSize, exitAnimMs, newPerDay;
     private TextView heroStatus;
+
+    /** Tab shown when the screen is (re)created, so theme changes don't jump back to Home. */
+    private static int currentTab = 0;
+    private static final String[] TABS = {"Home", "Decks", "Quiz", "Progress", "Look", "Lock"};
+    private static final int TAB_DECKS = 1, TAB_PROGRESS = 3;
+    private final java.util.List<View> pages = new java.util.ArrayList<>();
+    private final java.util.List<TextView> tabViews = new java.util.ArrayList<>();
+    private ScrollView scroll;
+    private LinearLayout deckList, chartsBox;
 
     // ================================================================ lifecycle
 
@@ -65,15 +73,37 @@ public class MainActivity extends Activity {
         root.setBackgroundColor(th.bg);
         root.addView(new AmbientBackground(this, th,
                 Prefs.floatDeckWords(this) ? Deck.cards(this) : java.util.Collections.<Deck.Card>emptyList()), matchParent());
-        ScrollView scroll = new ScrollView(this);
+        LinearLayout shell = new LinearLayout(this);
+        shell.setOrientation(LinearLayout.VERTICAL);
+        root.addView(shell, matchParent());
+
+        // ---- Tab bar, pinned at the top
+        HorizontalScrollView tabScroll = new HorizontalScrollView(this);
+        tabScroll.setHorizontalScrollBarEnabled(false);
+        tabScroll.setClipToPadding(false);
+        LinearLayout tabBar = new LinearLayout(this);
+        tabBar.setPadding(dp(14), dp(10), dp(14), dp(10));
+        tabBar.setClipChildren(false);
+        tabScroll.addView(tabBar);
+        for (int i = 0; i < TABS.length; i++) {
+            final int idx = i;
+            TextView t = text(TABS[i], 14.5f, th.sub, true);
+            t.setGravity(Gravity.CENTER);
+            t.setPadding(dp(16), dp(9), dp(16), dp(9));
+            t.setOnClickListener(v -> selectTab(idx));
+            LinearLayout.LayoutParams tl = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            tl.rightMargin = dp(8);
+            tabBar.addView(t, tl);
+            tabViews.add(t);
+        }
+        shell.addView(tabScroll, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        scroll = new ScrollView(this);
         scroll.setClipToPadding(false);
-        root.addView(scroll, matchParent());
-        LinearLayout col = new LinearLayout(this);
-        col.setOrientation(LinearLayout.VERTICAL);
-        col.setPadding(dp(18), dp(12), dp(18), dp(40));
-        col.setClipChildren(false);
-        col.setClipToPadding(false);
-        scroll.addView(col);
+        shell.addView(scroll, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1));
+        LinearLayout holder = new LinearLayout(this);
+        holder.setOrientation(LinearLayout.VERTICAL);
+        scroll.addView(holder);
         setContentView(root);
         root.setOnApplyWindowInsetsListener((v, ins) -> {
             int top, bottom;
@@ -83,15 +113,64 @@ public class MainActivity extends Activity {
             } else {
                 top = ins.getSystemWindowInsetTop(); bottom = ins.getSystemWindowInsetBottom();
             }
-            scroll.setPadding(0, top, 0, bottom);
+            shell.setPadding(0, top, 0, 0);
+            scroll.setPadding(0, 0, 0, bottom);
             return WindowInsets.CONSUMED;
         });
 
-        // ---- Hero
+        buildHome(page(holder));
+        buildDecks(page(holder));
+        buildQuiz(page(holder));
+        buildProgress(page(holder));
+        buildLook(page(holder));
+        buildLock(page(holder));
+        selectTab(currentTab);
+
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != 0) {
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1);
+        }
+    }
+
+    private LinearLayout page(LinearLayout holder) {
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setPadding(dp(18), dp(0), dp(18), dp(40));
+        col.setClipChildren(false);
+        col.setClipToPadding(false);
+        holder.addView(col, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        pages.add(col);
+        return col;
+    }
+
+    private void selectTab(int i) {
+        currentTab = i;
+        for (int k = 0; k < pages.size(); k++) pages.get(k).setVisibility(k == i ? View.VISIBLE : View.GONE);
+        for (int k = 0; k < tabViews.size(); k++) {
+            TextView t = tabViews.get(k);
+            GradientDrawable d = new GradientDrawable();
+            d.setCornerRadius(dp(50));
+            if (k == i) {
+                d.setColor(th.check);
+                t.setTextColor(th.btnText);
+            } else {
+                d.setColor((th.card & 0x00FFFFFF) | 0xB3000000);
+                d.setStroke(dp(1), (th.text & 0x00FFFFFF) | 0x14000000);
+                t.setTextColor(th.sub);
+            }
+            t.setBackground(d);
+        }
+        scroll.scrollTo(0, 0);
+        if (i == TAB_PROGRESS) refreshProgress();
+        if (i == TAB_DECKS) refreshDecks();
+    }
+
+    // ================================================================ tabs
+
+    private void buildHome(LinearLayout col) {
         TextView title = text("ことばロック", 34, th.text, true);
         title.setLetterSpacing(0.04f);
-        col.addView(title, lp(16));
-        TextView sub = text("Kotoba Lock · settings", 14, th.sub, false);
+        col.addView(title, lp(8));
+        TextView sub = text("Kotoba Lock", 14, th.sub, false);
         sub.setLetterSpacing(0.08f);
         col.addView(sub, lp(2));
         heroStatus = text("", 14, th.text, true);
@@ -99,15 +178,19 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams hp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         hp.topMargin = dp(14);
         col.addView(heroStatus, hp);
-        Button tryBtn = primary("Try the quiz now", v -> {
+        Button study = primary("学習する  ·  Study", v -> {
             saveFields();
-            if (!Settings.canDrawOverlays(this)) { toast("Allow \"Display over other apps\" first"); return; }
-            if (Deck.cards(this).isEmpty()) { toast("Sync the deck first"); return; }
-            QuizService.showNow(this);
+            if (Deck.cards(this).isEmpty()) { toast("Add a deck and sync it first"); selectTab(TAB_DECKS); return; }
+            startActivity(new Intent(this, StudyActivity.class));
         });
-        col.addView(tryBtn, lp(18));
+        study.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17);
+        study.setPadding(dp(12), dp(17), dp(12), dp(17));
+        col.addView(study, lp(18));
+        TextView hint = text("Quizzes you on your enabled decks for as long as you like. Answers count toward your progress.",
+                13, th.sub, false);
+        hint.setPadding(dp(6), 0, dp(6), 0);
+        col.addView(hint, lp(8));
 
-        // ---- Setup
         LinearLayout setup = section(col, "Setup");
         overlayStatus = status(setup);
         overlayBtn = secondary("Allow \"Display over other apps\"", v -> startActivity(new Intent(
@@ -118,7 +201,59 @@ public class MainActivity extends Activity {
                 Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + getPackageName()))));
         setup.addView(batteryBtn, lp(8));
 
-        // ---- Quiz
+        TextView foot = text("ことばロック  v" + versionName(), 12, th.sub, false);
+        foot.setAlpha(0.6f);
+        col.addView(foot, lp(28));
+    }
+
+    private void buildDecks(LinearLayout col) {
+        LinearLayout list = section(col, "Your decks");
+        deckStatus = status(list);
+        deckList = new LinearLayout(this);
+        deckList.setOrientation(LinearLayout.VERTICAL);
+        list.addView(deckList);
+
+        LinearLayout add = section(col, "Add a deck");
+        TextView how = text("Paste a deck link from kotobaweb.com (include ?secret=… for private decks).", 13, th.sub, false);
+        add.addView(how, lp(10));
+        EditText url = field(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        url.setHint("https://kotobaweb.com/dashboard/decks/…?secret=…");
+        url.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        add.addView(url, lp(10));
+        add.addView(primary("Add deck", v -> {
+            String err = Deck.add(this, url.getText().toString());
+            if (err != null) { toast(err); return; }
+            url.setText("");
+            java.util.List<Deck.Info> ds = Deck.decks(this);
+            String id = ds.get(ds.size() - 1).id;
+            refreshDecks();
+            deckStatus.set(0, "Downloading the new deck…");
+            new Thread(() -> {
+                Deck.SyncResult r = Deck.syncDeck(getApplicationContext(), id);
+                new Handler(Looper.getMainLooper()).post(() -> {
+                    toast(r.message);
+                    refreshDecks();
+                    refreshHero();
+                    if (r.needsLogin) startActivity(new Intent(this, LoginActivity.class));
+                });
+            }).start();
+        }), lp(12));
+
+        LinearLayout sync = section(col, "Sync");
+        LinearLayout btnRow = new LinearLayout(this);
+        btnRow.setClipChildren(false);
+        Button syncBtn = primary("Sync all", v -> { saveFields(); syncNow(); });
+        Button login = secondary("Log in with Discord", v -> { saveFields(); startActivity(new Intent(this, LoginActivity.class)); });
+        LinearLayout.LayoutParams half = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
+        LinearLayout.LayoutParams half2 = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
+        half2.leftMargin = dp(10);
+        btnRow.addView(syncBtn, half);
+        btnRow.addView(login, half2);
+        sync.addView(btnRow, lp(14));
+        syncHours = numberRow(sync, "Auto-sync every (hours)", "Runs in the background when you unlock. 0 = off.", Prefs.autoSyncHours(this));
+    }
+
+    private void buildQuiz(LinearLayout col) {
         LinearLayout quiz = section(col, "Quiz");
         toggleRow(quiz, "Quiz me every time I unlock", null, Prefs.ENABLED, true, on -> {
             if (on) QuizService.start(this); else QuizService.stop(this);
@@ -134,60 +269,45 @@ public class MainActivity extends Activity {
         perUnlock = numberRow(quiz, "Questions per unlock", null, Prefs.questionsPerUnlock(this));
         cooldown = numberRow(quiz, "Cooldown (minutes)", "Skip the quiz if one was finished this recently. 0 = always.", Prefs.cooldownMin(this));
 
-        // ---- Meanings
+        LinearLayout pick = section(col, "Which words you get");
+        toggleRow(pick, "Prioritise words I struggle with",
+                "Every first attempt is tracked per word. Words you miss come up more often until you get them right.",
+                Prefs.PRIORITISE_WEAK, true, null);
+        toggleRow(pick, "Limit new words per day",
+                "Once the limit is reached you only get words you've already seen, until tomorrow. Applies to study mode too.",
+                Prefs.NEW_LIMIT_ON, true, on -> newPerDay.setEnabled(on));
+        newPerDay = numberRow(pick, "New words per day", null, Prefs.newPerDay(this));
+        newPerDay.setEnabled(Prefs.newLimitOn(this));
+
         LinearLayout meanings = section(col, "Meanings");
         toggleRow(meanings, "Show meaning when I get it wrong", null, Prefs.MEANING_WRONG, true, null);
         toggleRow(meanings, "Show meaning when I get it right", null, Prefs.MEANING_RIGHT, true, null);
         toggleRow(meanings, "Look up missing meanings on jisho.org",
                 "Uses the card's comment from your deck; otherwise looks it up once and saves it.",
                 Prefs.MEANING_LOOKUP, true, null);
+    }
 
-        // ---- Progress
-        LinearLayout progress = section(col, "Progress");
-        statsStatus = status(progress);
-        toggleRow(progress, "Show how many questions I've answered",
+    private void buildProgress(LinearLayout col) {
+        chartsBox = new LinearLayout(this);
+        chartsBox.setOrientation(LinearLayout.VERTICAL);
+        chartsBox.setClipChildren(false);
+        chartsBox.setClipToPadding(false);
+        col.addView(chartsBox, lp(0));
+
+        LinearLayout opts = section(col, "Counter & data");
+        toggleRow(opts, "Show how many questions I've answered",
                 "A running total in the middle of the quiz's bottom bar.", Prefs.SHOW_ANSWERED, true, null);
-        toggleRow(progress, "Prioritise words I struggle with",
-                "Every first attempt is tracked per word. Words you miss come up more often until you get them right.",
-                Prefs.PRIORITISE_WEAK, true, null);
-        toggleRow(progress, "Limit new words per day",
-                "Once the limit is reached you only get words you've already seen, until tomorrow.",
-                Prefs.NEW_LIMIT_ON, true, on -> newPerDay.setEnabled(on));
-        newPerDay = numberRow(progress, "New words per day", null, Prefs.newPerDay(this));
-        newPerDay.setEnabled(Prefs.newLimitOn(this));
-        progress.addView(secondary("Reset statistics", v -> {
-            int dialogTheme = dark ? android.R.style.Theme_DeviceDefault_Dialog_Alert : android.R.style.Theme_DeviceDefault_Light_Dialog_Alert;
-            new AlertDialog.Builder(this, dialogTheme)
+        opts.addView(secondary("Reset statistics", v -> {
+            new AlertDialog.Builder(this, dialogTheme())
                     .setTitle("Reset statistics?")
-                    .setMessage("Your answered count and every word's history will be erased. This can't be undone.")
-                    .setPositiveButton("Reset", (d, w) -> { Stats.reset(this); refreshStats(); toast("Statistics reset"); })
+                    .setMessage("Your answered count, every word's history and these graphs will be erased. This can't be undone.")
+                    .setPositiveButton("Reset", (d, w) -> { Stats.reset(this); refreshProgress(); toast("Statistics reset"); })
                     .setNegativeButton("Cancel", null)
                     .show();
         }), lp(14));
+    }
 
-        // ---- Lock screen mode
-        LinearLayout lock = section(col, "Lock screen mode");
-        toggleRow(lock, "Use the quiz as my lock screen",
-                "The quiz is put up whenever the screen turns off, so it's the first thing you see.",
-                Prefs.LOCK_MODE, false, on -> refreshLockStatus());
-        lockStatus = status(lock);
-        lockBtn = secondary("Open Android screen lock settings", v -> {
-            try { startActivity(new Intent(Settings.ACTION_SECURITY_SETTINGS)); }
-            catch (Exception e) { startActivity(new Intent(Settings.ACTION_SETTINGS)); }
-        });
-        lock.addView(lockBtn, lp(8));
-        toggleRow(lock, "Long-press the title to skip", "Escape hatch if a quiz ever gets stuck.", Prefs.ALLOW_SKIP, true, null);
-        toggleRow(lock, "Hide the navigation bar", "Home / back / recents. A swipe up from the edge still shows it briefly.",
-                Prefs.HIDE_NAV_BAR, true, null);
-        TextView warn = text("⚠  Not real security: anyone can get in by typing an answer, and notifications, quick "
-                + "settings and the power menu stay reachable. Removing your PIN also turns off fingerprint/face "
-                + "unlock and may disable tap-to-pay and some banking or work apps. 「緊急通報」 is always on the quiz in this mode.",
-                12.5f, th.sub, false);
-        warn.setGravity(Gravity.START);
-        warn.setLineSpacing(0, 1.15f);
-        lock.addView(warn, lp(14));
-
-        // ---- Appearance
+    private void buildLook(LinearLayout col) {
         LinearLayout look = section(col, "Appearance");
         look.addView(rowTitle("Theme"), lp(4));
         HorizontalScrollView hs = new HorizontalScrollView(this);
@@ -225,35 +345,35 @@ public class MainActivity extends Activity {
             saveFields();
             recreate();
         }), lp(14));
+    }
 
-        // ---- Deck
-        LinearLayout deck = section(col, "Kotoba deck");
-        deckStatus = status(deck);
-        deck.addView(rowTitle("Deck link"), lp(12));
-        deckUrl = field(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        deckUrl.setText(Prefs.deckUrl(this));
-        deckUrl.setHint("https://kotobaweb.com/dashboard/decks/…?secret=…");
-        deckUrl.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
-        deck.addView(deckUrl, lp(8));
-        LinearLayout btnRow = new LinearLayout(this);
-        btnRow.setClipChildren(false);
-        Button sync = primary("Sync now", v -> { saveFields(); syncNow(); });
-        Button login = secondary("Log in with Discord", v -> { saveFields(); startActivity(new Intent(this, LoginActivity.class)); });
-        LinearLayout.LayoutParams half = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
-        LinearLayout.LayoutParams half2 = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
-        half2.leftMargin = dp(10);
-        btnRow.addView(sync, half);
-        btnRow.addView(login, half2);
-        deck.addView(btnRow, lp(14));
-        syncHours = numberRow(deck, "Auto-sync every (hours)", "Runs in the background when you unlock. 0 = off.", Prefs.autoSyncHours(this));
-
-        TextView foot = text("ことばロック  v" + versionName(), 12, th.sub, false);
-        foot.setAlpha(0.6f);
-        col.addView(foot, lp(28));
-
-        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != 0) {
-            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1);
-        }
+    private void buildLock(LinearLayout col) {
+        LinearLayout lock = section(col, "Lock screen mode");
+        toggleRow(lock, "Use the quiz as my lock screen",
+                "The quiz is put up whenever the screen turns off, so it's the first thing you see.",
+                Prefs.LOCK_MODE, false, on -> refreshLockStatus());
+        lockStatus = status(lock);
+        lockBtn = secondary("Open Android screen lock settings", v -> {
+            try { startActivity(new Intent(Settings.ACTION_SECURITY_SETTINGS)); }
+            catch (Exception e) { startActivity(new Intent(Settings.ACTION_SETTINGS)); }
+        });
+        lock.addView(lockBtn, lp(8));
+        toggleRow(lock, "Long-press the title to skip", "Escape hatch if a quiz ever gets stuck.", Prefs.ALLOW_SKIP, true, null);
+        toggleRow(lock, "Hide the navigation bar", "Home / back / recents. A swipe up from the edge still shows it briefly.",
+                Prefs.HIDE_NAV_BAR, true, null);
+        lock.addView(secondary("Preview the unlock quiz", v -> {
+            saveFields();
+            if (!Settings.canDrawOverlays(this)) { toast("Allow \"Display over other apps\" first"); return; }
+            if (Deck.cards(this).isEmpty()) { toast("Add a deck and sync it first"); return; }
+            QuizService.showNow(this);
+        }), lp(14));
+        TextView warn = text("⚠  Not real security: anyone can get in by typing an answer, and notifications, quick "
+                + "settings and the power menu stay reachable. Removing your PIN also turns off fingerprint/face "
+                + "unlock and may disable tap-to-pay and some banking or work apps. 「緊急通報」 is always on the quiz in this mode.",
+                12.5f, th.sub, false);
+        warn.setGravity(Gravity.START);
+        warn.setLineSpacing(0, 1.15f);
+        lock.addView(warn, lp(14));
     }
 
     @Override protected void onResume() {
@@ -265,23 +385,11 @@ public class MainActivity extends Activity {
         boolean battery = pm.isIgnoringBatteryOptimizations(getPackageName());
         batteryStatus.set(battery ? 1 : 0, battery ? "Battery optimisation off" : "Battery optimisation on — Android may stop the quiz");
         batteryBtn.setVisibility(battery ? View.GONE : View.VISIBLE);
-        refreshDeckStatus();
+        refreshDecks();
         refreshLockStatus();
         refreshHero();
-        refreshStats();
+        if (currentTab == TAB_PROGRESS) refreshProgress();
         QuizService.start(this);
-    }
-
-    private void refreshStats() {
-        long total = Stats.total(this);
-        int[] s = Stats.summary(this); // seen, right, wrong, struggling
-        if (total == 0) { statsStatus.set(0, "No answers yet — your progress will show up here."); return; }
-        int pct = Math.round(100f * s[1] / Math.max(1, s[1] + s[2]));
-        String limit = Prefs.newLimitOn(this)
-                ? "\nNew words today: " + Stats.newToday(this) + " / " + Prefs.newPerDay(this)
-                : "\nNew words today: " + Stats.newToday(this);
-        statsStatus.set(1, String.format(java.util.Locale.US, "%,d answered · %d%% right on the first try", total, pct)
-                + "\n" + s[0] + " words seen · " + s[3] + " you're struggling with" + limit);
     }
 
     @Override protected void onPause() {
@@ -289,13 +397,10 @@ public class MainActivity extends Activity {
         super.onPause();
     }
 
-    // ================================================================ logic (unchanged)
+    // ================================================================ logic
 
     private void saveFields() {
-        String url = deckUrl.getText().toString().trim();
         SharedPreferences.Editor e = Prefs.get(this).edit();
-        if (Prefs.parseDeckUrl(url) != null) e.putString(Prefs.DECK_URL, url);
-        else if (!url.isEmpty()) toast("Deck link doesn't look right — not saved");
         e.putInt(Prefs.QUESTIONS_PER_UNLOCK, Math.max(1, Math.min(20, parse(perUnlock, 1))));
         e.putInt(Prefs.COOLDOWN_MIN, Math.max(0, parse(cooldown, 0)));
         e.putInt(Prefs.AUTO_SYNC_HOURS, Math.max(0, parse(syncHours, 6)));
@@ -311,23 +416,250 @@ public class MainActivity extends Activity {
             Deck.SyncResult r = Deck.sync(getApplicationContext());
             new Handler(Looper.getMainLooper()).post(() -> {
                 toast(r.message);
-                refreshDeckStatus();
+                refreshDecks();
                 refreshHero();
                 if (r.needsLogin) startActivity(new Intent(this, LoginActivity.class));
             });
         }).start();
     }
 
-    private void refreshDeckStatus() {
-        int n = Deck.cards(this).size();
+    /** {struggling, learning, known, new} for a list of cards. */
+    private static int[] levelCounts(java.util.List<Deck.Card> cards, java.util.Map<String, Stats.Word> words) {
+        int[] n = new int[4];
+        for (Deck.Card k : cards) {
+            Stats.Word w = words.get(k.question);
+            n[w == null ? 3 : Charts.level(w)]++;
+        }
+        return n;
+    }
+
+    /** Rebuilds the deck list (names, switches, coverage) and the sync status line. */
+    private void refreshDecks() {
+        if (deckList == null) return;
+        deckList.removeAllViews();
+        java.util.List<Deck.Info> ds = Deck.decks(this);
+        java.util.Map<String, Stats.Word> words = Stats.words(this);
+        int pool = Deck.cards(this).size(), enabledTotal = 0, enabled = 0;
+        for (Deck.Info d : ds) {
+            int size = Deck.cardsOf(this, d.id).size();
+            if (d.enabled) { enabledTotal += size; enabled++; }
+            divider(deckList);
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.VERTICAL);
+            row.setPadding(0, dp(12), 0, dp(4));
+            LinearLayout top = new LinearLayout(this);
+            top.setGravity(Gravity.CENTER_VERTICAL);
+            LinearLayout texts = new LinearLayout(this);
+            texts.setOrientation(LinearLayout.VERTICAL);
+            texts.addView(rowTitle(d.label()));
+            int[] lv = levelCounts(Deck.cardsOf(this, d.id), words);
+            int seen = size - lv[3];
+            TextView info = text(size == 0 ? "Not downloaded yet — tap Sync all"
+                    : String.format(java.util.Locale.US, "%,d cards · %d%% seen", size, Math.round(100f * seen / size)), 13, th.sub, false);
+            texts.addView(info, lp(3));
+            top.addView(texts, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+            Switch sw = themedSwitch();
+            sw.setChecked(d.enabled);
+            sw.setOnCheckedChangeListener((v, on) -> { Deck.setEnabled(this, d.id, on); refreshDecks(); refreshHero(); });
+            top.addView(sw);
+            row.addView(top);
+            if (size > 0) {
+                Charts.LevelBar bar = new Charts.LevelBar(this, th, lv, 8);
+                bar.setAlpha(d.enabled ? 1f : 0.45f);
+                row.addView(bar, lp(10));
+            }
+            TextView remove = text("Remove", 13, th.bad, true);
+            remove.setPadding(0, dp(8), 0, dp(4));
+            remove.setOnClickListener(v -> new AlertDialog.Builder(this, dialogTheme())
+                    .setTitle("Remove \"" + d.label() + "\"?")
+                    .setMessage("The deck is removed from the app. Your progress on its words is kept.")
+                    .setPositiveButton("Remove", (dlg, w) -> { Deck.remove(this, d.id); refreshDecks(); refreshHero(); })
+                    .setNegativeButton("Cancel", null)
+                    .show());
+            row.addView(remove, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+            deckList.addView(row);
+        }
+
         long last = Prefs.get(this).getLong(Prefs.LAST_SYNC, 0);
         String msg = Prefs.get(this).getString(Prefs.LAST_SYNC_MSG, "");
-        String name = Deck.name(this);
         StringBuilder s = new StringBuilder();
-        s.append(n == 0 ? "No cards downloaded yet — log in and sync." : n + " cards" + (name.isEmpty() ? "" : " · " + name));
+        if (ds.isEmpty()) s.append("No decks yet — add one below.");
+        else {
+            s.append(String.format(java.util.Locale.US, "%,d cards in the question pool from %d of %d decks", pool, enabled, ds.size()));
+            int overlap = enabledTotal - pool;
+            if (overlap > 0) s.append(String.format(java.util.Locale.US, "\n%,d shared between decks, counted once", overlap));
+        }
         if (last > 0) s.append("\nLast sync ").append(DateUtils.getRelativeTimeSpanString(last));
         if (!msg.isEmpty() && !msg.startsWith("Synced")) s.append("\n").append(msg);
-        deckStatus.set(n == 0 ? -1 : (msg.startsWith("Synced") || msg.isEmpty() ? 1 : 0), s.toString());
+        deckStatus.set(pool == 0 ? -1 : (msg.startsWith("Synced") || msg.isEmpty() ? 1 : 0), s.toString());
+    }
+
+    // ================================================================ progress tab
+
+    private void refreshProgress() {
+        if (chartsBox == null) return;
+        chartsBox.removeAllViews();
+        java.util.Map<String, Stats.Word> words = Stats.words(this);
+        long total = Stats.total(this);
+        int[] sum = Stats.summary(this); // seen, right, wrong, struggling
+
+        // ---- Headline tiles
+        LinearLayout tiles = new LinearLayout(this);
+        tiles.setOrientation(LinearLayout.VERTICAL);
+        tiles.setClipChildren(false);
+        int acc = sum[1] + sum[2] == 0 ? 0 : Math.round(100f * sum[1] / (sum[1] + sum[2]));
+        int streak = Stats.streak(this);
+        tileRow(tiles, String.format(java.util.Locale.US, "%,d", total), "answered",
+                String.valueOf(streak), streak == 1 ? "day streak" : "days streak");
+        tileRow(tiles, sum[1] + sum[2] == 0 ? "–" : acc + "%", "right first try",
+                String.format(java.util.Locale.US, "%,d", sum[0]), "words seen");
+        chartsBox.addView(tiles, lp(4));
+        TextView today = text("New words today: " + Stats.newToday(this)
+                + (Prefs.newLimitOn(this) ? " / " + Prefs.newPerDay(this) : " (no limit)"), 13, th.sub, false);
+        today.setPadding(dp(6), 0, 0, 0);
+        chartsBox.addView(today, lp(10));
+
+        // ---- Last 30 days
+        int days = 30;
+        int[] right = new int[days], wrong = new int[days], cum = new int[days];
+        String[] labels = new String[days];
+        java.text.SimpleDateFormat key = new java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US);
+        java.text.SimpleDateFormat lab = new java.text.SimpleDateFormat("M/d", java.util.Locale.US);
+        java.util.Calendar cal = java.util.Calendar.getInstance();
+        cal.set(java.util.Calendar.HOUR_OF_DAY, 0); cal.set(java.util.Calendar.MINUTE, 0);
+        cal.set(java.util.Calendar.SECOND, 0); cal.set(java.util.Calendar.MILLISECOND, 0);
+        cal.add(java.util.Calendar.DAY_OF_YEAR, -(days - 1));
+        long[] firsts = new long[words.size()];
+        int fi = 0;
+        for (Stats.Word w : words.values()) firsts[fi++] = w.first();
+        java.util.Arrays.sort(firsts);
+        for (int i = 0; i < days; i++) {
+            Stats.Day d = Stats.day(this, key.format(cal.getTime()));
+            right[i] = d == null ? 0 : d.right;
+            wrong[i] = d == null ? 0 : d.answered - d.right;
+            labels[i] = lab.format(cal.getTime());
+            cal.add(java.util.Calendar.DAY_OF_YEAR, 1);
+            long end = cal.getTimeInMillis();
+            int n = 0;
+            while (n < firsts.length && firsts[n] < end) n++;
+            cum[i] = n;
+        }
+
+        LinearLayout daily = section(chartsBox, "Answers per day");
+        daily.addView(caption("Last 30 days · tap a bar for details"), lp(10));
+        daily.addView(new Charts.DailyBars(this, th, right, wrong, labels), lp(10));
+        LinearLayout legend = new LinearLayout(this);
+        legend.addView(legendItem(th.good, "Right"));
+        legend.addView(legendItem(th.bad, "Wrong"));
+        daily.addView(legend, lp(6));
+
+        LinearLayout seenCard = section(chartsBox, "Words seen");
+        seenCard.addView(caption("Distinct words you've answered, last 30 days"), lp(10));
+        seenCard.addView(new Charts.CumulativeLine(this, th, cum, labels), lp(10));
+
+        // ---- Knowledge levels across the question pool
+        java.util.List<Deck.Card> poolCards = Deck.cards(this);
+        int[] lv = levelCounts(poolCards, words);
+        LinearLayout know = section(chartsBox, "How well you know your words");
+        know.addView(caption(String.format(java.util.Locale.US, "Across your enabled decks · %,d words", poolCards.size())), lp(10));
+        know.addView(new Charts.LevelBar(this, th, lv, 16), lp(12));
+        String[] desc = {"you miss these more often than not", "getting there", "you get these right", "not answered yet"};
+        for (int i = 0; i < 4; i++) {
+            LinearLayout r = new LinearLayout(this);
+            r.setGravity(Gravity.CENTER_VERTICAL);
+            r.setPadding(0, dp(8), 0, 0);
+            r.addView(dot(Charts.levelColor(th, i)));
+            LinearLayout tx = new LinearLayout(this);
+            tx.setOrientation(LinearLayout.VERTICAL);
+            tx.addView(text(Charts.LEVELS[i], 15, th.text, true));
+            tx.addView(text(desc[i], 12.5f, th.sub, false));
+            r.addView(tx, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+            int pct = poolCards.isEmpty() ? 0 : Math.round(100f * lv[i] / poolCards.size());
+            TextView val = text(String.format(java.util.Locale.US, "%,d  ·  %d%%", lv[i], pct), 14, th.text, true);
+            r.addView(val);
+            know.addView(r);
+        }
+
+        // ---- Coverage per deck
+        java.util.List<Deck.Info> ds = Deck.decks(this);
+        if (!ds.isEmpty()) {
+            LinearLayout cover = section(chartsBox, "Deck coverage");
+            cover.addView(caption("How much of each deck you've seen, split by how well you know it"), lp(10));
+            for (Deck.Info d : ds) {
+                java.util.List<Deck.Card> cards = Deck.cardsOf(this, d.id);
+                int[] c = levelCounts(cards, words);
+                int seen = cards.size() - c[3];
+                LinearLayout r = new LinearLayout(this);
+                r.setGravity(Gravity.CENTER_VERTICAL);
+                r.setPadding(0, dp(12), 0, dp(6));
+                TextView name = text(d.label() + (d.enabled ? "" : "  (off)"), 15, th.text, true);
+                r.addView(name, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+                r.addView(text(cards.isEmpty() ? "–" : String.format(java.util.Locale.US, "%,d / %,d  ·  %d%%",
+                        seen, cards.size(), Math.round(100f * seen / cards.size())), 13.5f, th.sub, true));
+                cover.addView(r);
+                cover.addView(new Charts.LevelBar(this, th, c, 10), lp(2));
+            }
+        }
+    }
+
+    private TextView caption(String s) {
+        TextView t = text(s, 13, th.sub, false);
+        t.setGravity(Gravity.START);
+        return t;
+    }
+
+    private View dot(int color) {
+        View v = new View(this);
+        GradientDrawable g = new GradientDrawable();
+        g.setCornerRadius(dp(3));
+        g.setColor(color);
+        v.setBackground(g);
+        LinearLayout.LayoutParams l = new LinearLayout.LayoutParams(dp(12), dp(12));
+        l.rightMargin = dp(12);
+        v.setLayoutParams(l);
+        return v;
+    }
+
+    private View legendItem(int color, String label) {
+        LinearLayout r = new LinearLayout(this);
+        r.setGravity(Gravity.CENTER_VERTICAL);
+        r.setPadding(0, 0, dp(18), 0);
+        View d = dot(color);
+        ((LinearLayout.LayoutParams) d.getLayoutParams()).rightMargin = dp(6);
+        r.addView(d);
+        r.addView(text(label, 13, th.sub, false));
+        return r;
+    }
+
+    private void tileRow(LinearLayout parent, String v1, String l1, String v2, String l2) {
+        LinearLayout row = new LinearLayout(this);
+        row.setClipChildren(false);
+        LinearLayout.LayoutParams a = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
+        LinearLayout.LayoutParams b = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
+        b.leftMargin = dp(10);
+        row.addView(tile(v1, l1), a);
+        row.addView(tile(v2, l2), b);
+        parent.addView(row, lp(10));
+    }
+
+    private View tile(String value, String label) {
+        LinearLayout t = new LinearLayout(this);
+        t.setOrientation(LinearLayout.VERTICAL);
+        t.setPadding(dp(16), dp(14), dp(16), dp(14));
+        GradientDrawable bg = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{mix(th.card, th.text, 0.035f), th.card});
+        bg.setCornerRadius(dp(20));
+        bg.setStroke(dp(1), (th.text & 0x00FFFFFF) | 0x12000000);
+        t.setBackground(bg);
+        shadow(t, 6);
+        TextView v = text(value, 28, th.text, true);
+        t.addView(v);
+        t.addView(text(label, 13, th.sub, false));
+        return t;
+    }
+
+    private int dialogTheme() {
+        return dark ? android.R.style.Theme_DeviceDefault_Dialog_Alert : android.R.style.Theme_DeviceDefault_Light_Dialog_Alert;
     }
 
     private void refreshLockStatus() {
@@ -444,10 +776,7 @@ public class MainActivity extends Activity {
             texts.addView(d, lp(3));
         }
         row.addView(texts, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
-        Switch sw = new Switch(this);
-        int[][] st = {{android.R.attr.state_checked}, {}};
-        sw.setThumbTintList(new ColorStateList(st, new int[]{th.check, mix(th.sub, th.text, 0.4f)}));
-        sw.setTrackTintList(new ColorStateList(st, new int[]{(th.check & 0x00FFFFFF) | 0x80000000, (th.sub & 0x00FFFFFF) | 0x50000000}));
+        Switch sw = themedSwitch();
         sw.setChecked(Prefs.get(this).getBoolean(key, def));
         sw.setOnCheckedChangeListener((v, on) -> {
             Prefs.get(this).edit().putBoolean(key, on).apply();
@@ -494,6 +823,14 @@ public class MainActivity extends Activity {
                     .show();
         });
         card.addView(row);
+    }
+
+    private Switch themedSwitch() {
+        Switch sw = new Switch(this);
+        int[][] st = {{android.R.attr.state_checked}, {}};
+        sw.setThumbTintList(new ColorStateList(st, new int[]{th.check, mix(th.sub, th.text, 0.4f)}));
+        sw.setTrackTintList(new ColorStateList(st, new int[]{(th.check & 0x00FFFFFF) | 0x80000000, (th.sub & 0x00FFFFFF) | 0x50000000}));
+        return sw;
     }
 
     private EditText numberRow(LinearLayout card, String title, String desc, int value) {
